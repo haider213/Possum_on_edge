@@ -55,3 +55,35 @@ Follow these steps:
 5. Set `app.py` (or `viewer_app.py`) as the Space's entry file and start the Space.
 
 The application will launch in the hosted Gradio environment with ephemeral GPU access provided by ZeroGPU.
+
+### Deploying from the terminal
+
+If you prefer the command line, you can push the repository directly to a new Space.
+First install the Hugging Face CLI and log in:
+
+```bash
+pip install huggingface_hub
+huggingface-cli login
+```
+
+Create a Space and select the ZeroGPU hardware tier:
+
+```bash
+huggingface-cli repo create my-possum-space --type space --sdk gradio
+```
+
+Then push the code from this repository:
+
+```bash
+git init
+huggingface-cli repo clone my-possum-space
+cd my-possum-space
+cp -r ../* .
+# or clone this repository directly into the space directory
+git add .
+git commit -m "Deploy app"
+git push
+```
+
+After the push completes the Space will build and run the app on ZeroGPU.
+
