@@ -43,3 +43,15 @@ python app.py
 
 By default the apps expect the dataset under `./data/invasive-species`. You can specify a custom data root and annotation CSV path through the UI once the app is running.
 
+## Deploying on Gradio using ZeroGPU
+
+You can also host the apps on [Hugging Face Spaces](https://huggingface.co/spaces) and run them with the free **ZeroGPU** hardware tier.
+Follow these steps:
+
+1. Sign in to Hugging Face and create a new Space.
+2. Choose the **Gradio** SDK and select **ZeroGPU** as the hardware.
+3. Upload the repository files or connect the Space to this Git repository.
+4. Ensure `requirements.txt` lists all dependencies including `gradio` and `librosa`.
+5. Set `app.py` (or `viewer_app.py`) as the Space's entry file and start the Space.
+
+The application will launch in the hosted Gradio environment with ephemeral GPU access provided by ZeroGPU.
