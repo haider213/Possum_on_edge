@@ -4,6 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 import librosa
+import soundfile as sf
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -15,6 +16,7 @@ class Viewer:
         self.df = pd.DataFrame()
         self.root = Path(".")
         self.idx = 0
+        self.window_energies: list[float] = []
 
     def load_dataset(self, data_root: str, annot_csv: str):
         self.root = Path(data_root)
@@ -35,6 +37,27 @@ class Viewer:
             raise gr.Error("Dataset not loaded")
         self.idx = (self.idx - 1) % len(self.df)
         return self._prepare_output()
+
+    def compute_window_energies(self):
+        if self.df.empty:
+            raise gr.Error("Dataset not loaded")
+        energies = []
+        for fname in self.df['Filename']:
+            path = self._audio_path(str(fname))
+            y, sr = librosa.load(path, sr=16000, mono=True)
+            for start in range(0, max(1, len(y) - sr + 1), sr):
+                win = y[start:start + sr]
+                energy = float(np.sum(win ** 2))
+                energies.append(energy)
+        self.window_energies = energies
+        hist = self._plot_energy_hist(0.0)
+        max_energy = max(energies) if energies else 1.0
+        return hist, gr.Slider.update(maximum=float(max_energy))
+
+    def update_hist(self, threshold: float):
+        if not self.window_energies:
+            raise gr.Error("Run compute first")
+        return self._plot_energy_hist(threshold)
 
     # Internal helpers --------------------------------------------------
     def _audio_path(self, fname: str) -> Path:
@@ -93,6 +116,43 @@ class Viewer:
                 writer.writerow(['Filename', 'Energy'])
             writer.writerow([fname, energy])
 
+    def _plot_energy_hist(self, threshold: float) -> bytes:
+        if not self.window_energies:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, 'No data', ha='center')
+            fig.tight_layout()
+            return self._fig_to_bytes(fig)
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.hist(self.window_energies, bins=40, color='lightblue', edgecolor='black')
+        if threshold > 0:
+            ax.axvline(threshold, color='red', ls='--', label=f'Threshold={threshold:.2f}')
+            ax.legend()
+        ax.set_xlabel('Energy')
+        ax.set_ylabel('Count')
+        fig.tight_layout()
+        return self._fig_to_bytes(fig)
+
+    def clip_dataset(self, out_dir: str, threshold: float) -> str:
+        if self.df.empty:
+            raise gr.Error('Dataset not loaded')
+        if not self.window_energies:
+            # compute energies for progress, though not necessary
+            self.compute_window_energies()
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        count = 0
+        for fname in self.df['Filename']:
+            path = self._audio_path(str(fname))
+            y, sr = librosa.load(path, sr=16000, mono=True)
+            for start in range(0, max(1, len(y) - sr + 1), sr):
+                win = y[start:start + sr]
+                energy = float(np.sum(win ** 2))
+                if energy >= threshold:
+                    name = f"{Path(fname).stem}_{start//sr:03d}.wav"
+                    sf.write(out_path / name, win, sr)
+                    count += 1
+        return f"Saved {count} segments to {out_path}"
+
 
 viewer = Viewer()
 
@@ -102,25 +162,41 @@ with gr.Blocks(title="Possum Audio Viewer") as demo:
     annot_in = gr.Textbox(label="Annotation CSV path")
     load_btn = gr.Button("Load")
 
-    out_fname = gr.Textbox(label="File", interactive=False)
-    out_wave = gr.Image(label="Waveform")
-    out_power = gr.Textbox(label="Power", interactive=False)
-    out_norm_wave = gr.Image(label="Normalised Waveform")
-    out_energy = gr.Textbox(label="Normalised Energy", interactive=False)
-    out_audio = gr.Audio(label="Playback")
+    with gr.Tabs():
+        with gr.TabItem("Explore"):
+            out_fname = gr.Textbox(label="File", interactive=False)
+            out_wave = gr.Image(label="Waveform")
+            out_power = gr.Textbox(label="Power", interactive=False)
+            out_norm_wave = gr.Image(label="Normalised Waveform")
+            out_energy = gr.Textbox(label="Normalised Energy", interactive=False)
+            out_audio = gr.Audio(label="Playback")
+            prev_btn = gr.Button("◀ Prev")
+            next_btn = gr.Button("Next ▶")
 
-    prev_btn = gr.Button("◀ Prev")
-    next_btn = gr.Button("Next ▶")
+            load_btn.click(viewer.load_dataset,
+                           inputs=[data_root_in, annot_in],
+                           outputs=[out_fname, out_wave, out_power,
+                                    out_norm_wave, out_energy, out_audio])
 
-    load_btn.click(viewer.load_dataset,
-                   inputs=[data_root_in, annot_in],
-                   outputs=[out_fname, out_wave, out_power,
-                            out_norm_wave, out_energy, out_audio])
+            next_btn.click(viewer.next_clip, outputs=[out_fname, out_wave, out_power,
+                                                      out_norm_wave, out_energy, out_audio])
+            prev_btn.click(viewer.prev_clip, outputs=[out_fname, out_wave, out_power,
+                                                      out_norm_wave, out_energy, out_audio])
 
-    next_btn.click(viewer.next_clip, outputs=[out_fname, out_wave, out_power,
-                                              out_norm_wave, out_energy, out_audio])
-    prev_btn.click(viewer.prev_clip, outputs=[out_fname, out_wave, out_power,
-                                              out_norm_wave, out_energy, out_audio])
+        with gr.TabItem("EDA"):
+            compute_btn = gr.Button("Compute energies")
+            thresh_slider = gr.Slider(label="Threshold", minimum=0, maximum=1, step=0.01, value=0)
+            hist_img = gr.Image(label="Energy histogram")
+            compute_btn.click(viewer.compute_window_energies,
+                              outputs=[hist_img, thresh_slider])
+            thresh_slider.change(viewer.update_hist, inputs=thresh_slider, outputs=hist_img)
+
+        with gr.TabItem("Clip Segments"):
+            out_dir_in = gr.Textbox(label="Output folder")
+            clip_thresh = gr.Number(label="Threshold", value=0.0)
+            clip_btn = gr.Button("Clip")
+            clip_msg = gr.Textbox(label="Status", interactive=False)
+            clip_btn.click(viewer.clip_dataset, inputs=[out_dir_in, clip_thresh], outputs=clip_msg)
 
 if __name__ == "__main__":
     demo.launch()
