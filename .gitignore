@@ -1,0 +1,15 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+.env
+
+# Dataset files
+/data/
+
+# Logs
+energy_log.csv
+window_energy_log.csv
