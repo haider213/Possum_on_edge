@@ -225,3 +225,30 @@ def fig_to_bytes(fig: plt.Figure) -> bytes:
     plt.close(fig)
     buf.seek(0)
     return buf.read()
+
+
+def high_energy_windows(
+    y: np.ndarray,
+    sr: int,
+    threshold: float,
+    window_sec: float = DEFAULT_CLIP_SEC,
+) -> List[Tuple[float, np.ndarray]]:
+    """Return list of (start_time, segment) for 1-second windows above threshold.
+
+    The signal is first normalised to [0, 1] range. Energy is computed as the
+    sum of squared amplitudes within each window.
+    """
+    if len(y) == 0:
+        return []
+    y_norm = y
+    if np.max(y) != np.min(y):
+        y_norm = (y - np.min(y)) / (np.max(y) - np.min(y))
+
+    win = int(window_sec * sr)
+    result = []
+    for s in range(0, len(y_norm) - win + 1, win):
+        seg = y_norm[s:s + win]
+        energy = float(np.sum(seg ** 2))
+        if energy >= threshold:
+            result.append((s / sr, seg))
+    return result
