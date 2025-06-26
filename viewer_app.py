@@ -15,6 +15,8 @@ class Viewer:
         self.df = pd.DataFrame()
         self.root = Path(".")
         self.idx = 0
+        self.current_y_norm = np.array([])
+        self.current_sr = 16000
 
     def load_dataset(self, data_root: str, annot_csv: str):
         self.root = Path(data_root)
@@ -35,6 +37,21 @@ class Viewer:
             raise gr.Error("Dataset not loaded")
         self.idx = (self.idx - 1) % len(self.df)
         return self._prepare_output()
+
+    def detect_calls(self, threshold: float):
+        """Return start times (s) of 1s windows with energy >= threshold."""
+        if self.current_y_norm.size == 0:
+            raise gr.Error("No clip loaded")
+        win = int(self.current_sr)
+        starts = []
+        for s in range(0, len(self.current_y_norm) - win + 1, win):
+            seg = self.current_y_norm[s:s + win]
+            energy = float(np.sum(seg ** 2))
+            if energy >= threshold:
+                starts.append(s / self.current_sr)
+        if not starts:
+            return "None"
+        return ", ".join(f"{st:.2f}" for st in starts)
 
     # Internal helpers --------------------------------------------------
     def _audio_path(self, fname: str) -> Path:
@@ -79,6 +96,10 @@ class Viewer:
         fig2.tight_layout()
         norm_png = self._fig_to_bytes(fig2)
 
+        # store current normalised signal for EDA tab
+        self.current_y_norm = y_norm
+        self.current_sr = sr
+
         energy = float(np.sum(y_norm ** 2))
         self._log_energy(str(fname), energy)
 
@@ -98,29 +119,39 @@ viewer = Viewer()
 
 with gr.Blocks(title="Possum Audio Viewer") as demo:
     gr.Markdown("# Possum Audio Viewer")
-    data_root_in = gr.Textbox(label="Data root folder")
-    annot_in = gr.Textbox(label="Annotation CSV path")
-    load_btn = gr.Button("Load")
+    with gr.Tabs():
+        with gr.Tab("Viewer"):
+            data_root_in = gr.Textbox(label="Data root folder")
+            annot_in = gr.Textbox(label="Annotation CSV path")
+            load_btn = gr.Button("Load")
 
-    out_fname = gr.Textbox(label="File", interactive=False)
-    out_wave = gr.Image(label="Waveform")
-    out_power = gr.Textbox(label="Power", interactive=False)
-    out_norm_wave = gr.Image(label="Normalised Waveform")
-    out_energy = gr.Textbox(label="Normalised Energy", interactive=False)
-    out_audio = gr.Audio(label="Playback")
+            out_fname = gr.Textbox(label="File", interactive=False)
+            out_wave = gr.Image(label="Waveform")
+            out_power = gr.Textbox(label="Power", interactive=False)
+            out_norm_wave = gr.Image(label="Normalised Waveform")
+            out_energy = gr.Textbox(label="Normalised Energy", interactive=False)
+            out_audio = gr.Audio(label="Playback")
 
-    prev_btn = gr.Button("◀ Prev")
-    next_btn = gr.Button("Next ▶")
+            prev_btn = gr.Button("◀ Prev")
+            next_btn = gr.Button("Next ▶")
 
-    load_btn.click(viewer.load_dataset,
-                   inputs=[data_root_in, annot_in],
-                   outputs=[out_fname, out_wave, out_power,
-                            out_norm_wave, out_energy, out_audio])
+            load_btn.click(viewer.load_dataset,
+                           inputs=[data_root_in, annot_in],
+                           outputs=[out_fname, out_wave, out_power,
+                                    out_norm_wave, out_energy, out_audio])
 
-    next_btn.click(viewer.next_clip, outputs=[out_fname, out_wave, out_power,
-                                              out_norm_wave, out_energy, out_audio])
-    prev_btn.click(viewer.prev_clip, outputs=[out_fname, out_wave, out_power,
-                                              out_norm_wave, out_energy, out_audio])
+            next_btn.click(viewer.next_clip, outputs=[out_fname, out_wave, out_power,
+                                                      out_norm_wave, out_energy, out_audio])
+            prev_btn.click(viewer.prev_clip, outputs=[out_fname, out_wave, out_power,
+                                                      out_norm_wave, out_energy, out_audio])
+
+        with gr.Tab("EDA"):
+            gr.Markdown("## Energy-based Call Detection")
+            threshold_in = gr.Number(label="Energy threshold", value=1.0)
+            detect_btn = gr.Button("Detect Calls")
+            call_times = gr.Textbox(label="Call start times (s)", interactive=False)
+
+            detect_btn.click(viewer.detect_calls, inputs=threshold_in, outputs=call_times)
 
 if __name__ == "__main__":
     demo.launch()
